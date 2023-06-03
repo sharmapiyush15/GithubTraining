@@ -1,0 +1,30 @@
+<template>
+    <div>
+       <!--         <lightning-input type="text" name="input1" label="Enter an id" class="input1"></lightning-input> -->
+       <!--         <lightning-button variant="brand" label="Lookup" title="Lookup" onclick={handleClick} class="slds-m-left_x-small"></lightning-button> -->
+       <div class="demo-only" >
+          <div class="slds-split-view_container slds-is-open">
+             <article aria-hidden="false" id="split-view-id" class="slds-split-view slds-grid slds-grid_vertical slds-grow">
+                <div class="slds-grid slds-grid_vertical">
+                   <ul aria-multiselectable="true" class="slds-scrollable_y slds-card" role="listbox" aria-label="Select an item to open it in a new workspace tab." if:true={show}>
+                      <template for:each={records} for:item="record">
+                         <li key={record.id} class="slds-split-view__list-item slds-is-unread" role="presentation" data-record-id={record.id}>
+                            <a data-record-id={record.id} data-api-name={record.apiName} aria-selected="false" role="option" class="slds-split-view__list-item-action slds-grow slds-has-flexi-truncate" tabindex="0" onclick={handleClick}>
+                                <div  data-record-id={record.id} class="slds-grid slds-wrap">
+                                    <span class="slds-truncate slds-text-body_regular slds-text-color_default" title={record.field1}>{record.field1}</span>
+                                    <span class="slds-truncate slds-col_bump-left" title={record.field2}>{record.field2}</span>
+                                 </div>
+                                 <div class="slds-grid slds-wrap"  data-record-id={record.id}>
+                                    <span class="slds-truncate" title={record.field3}>{record.field3}</span>
+                                    <span class="slds-truncate slds-col_bump-left" title={record.field4}>{record.field4}</span>
+                                 </div>
+                            </a>
+                         </li>
+                      </template>
+                   </ul>
+                </div>
+             </article>
+          </div>
+       </div>
+    </div>
+ </template>
