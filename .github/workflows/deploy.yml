@@ -1,0 +1,67 @@
+
+name: Code to Deployment
+run-name: Deploy to ${{ github.ref }} Org by @${{ github.actor }}
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - force-app/main/default/**
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Setup node
+        uses: actions/setup-node@v1
+        with:
+          node-version: 14.x
+      - name: Install SFDX CLI
+        run: npm install sfdx-cli@latest -g
+      - name: Install SGD
+        run: echo y | sfdx plugins:install sfdx-git-delta@latest
+      - name: Decrypt file
+        run: openssl enc -nosalt -aes-256-cbc -d -in assets/server.key.enc -out
+          server.key -base64 -K ${{secrets.PROD_DECRYPTION_KEY}} -iv
+          ${{secrets.PROD_DECRYPTION_IV}}
+      - name: Authorize PROD
+        if: github.ref  == 'refs/heads/main'
+        run: sfdx force:auth:jwt:grant --clientid=${{ secrets.PROD_CONSUMER_KEY }}
+          --username=${{ secrets.PROD_USERNAME }} --jwtkeyfile server.key
+          --instanceurl ${{secrets.PROD_LOGINURL}}
+ 
+      - name: Generate SFDX Delta Package for deployment From ${ github.ref }
+        if: github.ref  == 'refs/heads/main'
+        run: >
+          
+          git fetch origin "+refs/heads/*:refs/remotes/origin/*"
+
+          echo '.github' > .sgdignore
+
+          mkdir changed-sources
+
+          sfdx sgd:source:delta --to "HEAD" --from "HEAD~1" --output changed-sources/  --generate-delta -i .sgdignore
+      - name: Generated Package.xml
+        run: cat changed-sources/package/package.xml
+      - name: Install YQ
+        run: |+
+          pip install yq
+          yq --version
+            
+      - name: Run Test AND Deploy on Metadata to PROD org'
+        if: github.ref  == 'refs/heads/main'
+        run: >
+          
+          export APEX_CLASSES=$(xq . < changed-sources/package/package.xml | jq '.Package.types | [.] | flatten | map(select(.name=="ApexClass")) | .[] | .members | [.] | flatten | map(select(. | index("*") | not)) | unique | join(",")' -r)   
+
+          echo $APEX_CLASSES
+
+          if [ -z "$APEX_CLASSES" ]; then
+              sfdx force:source:deploy -x changed-sources/package/package.xml -u ${{ secrets.PROD_USERNAME }} 
+            else
+
+                sfdx  force:source:deploy -x changed-sources/package/package.xml -w 30 -l RunSpecifiedTests -r "$APEX_CLASSES" -u ${{ secrets.PROD_USERNAME }} 
+              fi

@@ -7,6 +7,7 @@ global class POCInactiveUserScheduleClass Implements Schedulable {
         
         for(Account acc : accounts) {
             acc.Name = 'POC Test University - ' + acc.Name;
+            acc.Name = 'POC Test University Test - ' + acc.Name;
         }
         update accounts;
     }
