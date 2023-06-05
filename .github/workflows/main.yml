@@ -1,0 +1,150 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Validate
+run-name: Validating for PR ${{ github.event.issue.pull_request }} by @${{ github.actor }}
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the master branch
+on:
+    
+ pull_request:
+
+    types: ['opened', 'reopened']
+
+    branches:    
+      - 'main'
+    paths:
+      - 'force-app/main/default/**'
+      
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+    # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+    - name: Checkout sources
+      uses: actions/checkout@v3
+      with:
+          fetch-depth: 0
+
+    - name: Setup node
+      uses: actions/setup-node@v1
+      with:
+          node-version: '14.x'
+   
+    - name: Install SFDX CLI
+      run: npm install sfdx-cli@latest -g
+      
+    - name: Install SGD
+      run: echo y | sfdx plugins:install sfdx-git-delta@latest
+   
+   # Runs a set of commands using the runners shell
+    - name: 'Decrypt file'
+      run: openssl enc -nosalt -aes-256-cbc -d -in assets/server.key.enc -out server.key -base64 -K ${{secrets.DECRYPTION_KEY}} -iv ${{secrets.DECRYPTION_IV}}
+      
+    - name: 'Authorize DEV'
+
+      if : github.base_ref  == 'DEV' 
+      #if: github.ref == 'refs/heads/DEV' && github.event_name == 'push'
+      run: sfdx force:auth:jwt:grant --clientid ${{ secrets.DEV_CONSUMER_KEY }} --username ${{ secrets.DEV_USERNAME }} --jwtkeyfile server.key --instanceurl ${{ secrets.DEV_LOGIN_URL }}
+
+    - name: 'Authorize SIT'
+      if: github.base_ref  == 'SIT' 
+      run: sfdx force:auth:jwt:grant --clientid=${{ secrets.SIT_CONSUMER_KEY }} --username=${{ secrets.SIT_USERNAME }} --jwtkeyfile server.key --instanceurl ${{secrets.SIT_LOGINURL}}
+
+    - name: 'Authorize PROD'
+      if: github.base_ref  == 'main' 
+      run: sfdx force:auth:jwt:grant --clientid=${{ secrets.PROD_CONSUMER_KEY }} --username=${{ secrets.PROD_USERNAME }} --jwtkeyfile server.key --instanceurl ${{secrets.PROD_LOGINURL}}
+   
+    - name: Install sfdxGit delta
+      run: |
+        echo y | sfdx plugins:install sfdx-git-delta
+        sfdx plugins
+
+    - name: Generate SFDX Delta Package Patch Branch to DEV01 
+      if : github.base_ref  == 'DEV' 
+      #if: github.ref == 'refs/heads/DEV' && github.event_name == 'push'
+      run: |
+        #github.event.push.head.ref
+        git fetch origin "+refs/heads/*:refs/remotes/origin/*"
+        echo '.github' > .sgdignore
+        mkdir changed-sources
+
+        sfdx sgd:source:delta -d -f "origin/DEV" -o "changed-sources/" -s "force-app" -r "."
+        #sfdx sgd:source:delta --to "origin/DEV" --from "origin/${{ github.head_ref }}" --output changed-sources/   -i .sgdignore
+        #dir changed-sources/force-app/main
+        #cat changed-sources/package/package.xml
+        
+    - name: Generate SFDX Delta Package to SIT From DEV
+      if: github.base_ref  == 'SIT'
+      run: |
+        
+        git fetch origin "+refs/heads/*:refs/remotes/origin/*"
+        echo '.github' > .sgdignore
+        mkdir changed-sources
+
+        sfdx sgd:source:delta -d -f "origin/SIT" -o "changed-sources/" -s "force-app" -r "."
+        #sfdx sgd:source:delta --to "origin/SIT" --from "origin/DEV" --output changed-sources/  -i .sgdignore
+        dir changed-sources/
+        echo "--- package.xml generated with added and modified metadata ---"
+        cat changed-sources/package/package.xml
+        echo ""
+        echo "--- destructiveChanges.xml generated with deleted metadata ---"
+        cat changed-sources/destructiveChanges/destructiveChanges.xml
+      
+    - name: Generate SFDX Delta Package PROD
+      if: github.base_ref  == 'main'
+      run: |
+        
+        git fetch origin "+refs/heads/*:refs/remotes/origin/*"
+        echo '.github' > .sgdignore
+        mkdir changed-sources
+
+        sfdx sgd:source:delta -d -f "origin/main" -o "changed-sources/" -s "force-app" -r "."
+        #sfdx sgd:source:delta --to "origin/main" --from "origin/SIT" --output changed-sources/ -i .sgdignore
+        dir changed-sources/
+            
+    - name: Generated Package.xml 
+      run: cat changed-sources/package/package.xml
+
+    - name: Install YQ 
+      run: |
+         pip install yq
+         yq --version
+    
+    - name: 'Run Test on Metadata DEV'
+      #if : github.base_ref  == 'DEV'  && github.head_ref == 'AW-Full-Deployment'
+      if: github.base_ref  == 'DEV'
+      run: | 
+               export APEX_CLASSES=$(xq . < changed-sources/package/package.xml | jq '.Package.types | [.] | flatten | map(select(.name=="ApexClass")) | .[] | .members | [.] | flatten | map(select(. | index("*") | not)) | unique | join(",")' -r)   
+               echo $APEX_CLASSES
+               if [ -z "$APEX_CLASSES" ]; then 
+                  echo "if condition" $APEX_CLASSES
+
+                  echo y | sfdx  force:source:deploy -x changed-sources/package/package.xml -w 30 -u ${{ secrets.DEV_USERNAME }} -c
+                else 
+                  echo "else" $APEX_CLASSES
+                  echo y | sfdx  force:source:deploy -x changed-sources/package/package.xml -w 30 -l RunSpecifiedTests -r "$APEX_CLASSES" -u ${{ secrets.DEV_USERNAME }} -c
+                fi
+      
+    - name: 'Run Test on Metadata SIT'
+      if: github.base_ref  == 'SIT'  
+      run: |
+         if [ -z "$APEX_CLASSES" ]; then
+            sfdx force:source:deploy -x changed-sources/package/package.xml -u ${{ secrets.SIT_USERNAME }} -c 
+          else
+              sfdx force:source:deploy -x changed-sources/package/package.xml -w 30 -l RunSpecifiedTests -r "$APEX_CLASSES" -u ${{ secrets.SIT_USERNAME }} -c
+            fi
+        
+    - name: 'Run Test on Metadata PROD'
+      if: github.base_ref  == 'main' 
+      run: |
+         if [ -z "$APEX_CLASSES" ]; then
+            sfdx force:source:deploy -x changed-sources/package/package.xml -u ${{ secrets.PROD_USERNAME }} -c 
+          else
+              sfdx force:source:deploy -x changed-sources/package/package.xml -w 30 -l RunSpecifiedTests -r "$APEX_CLASSES" -u ${{ secrets.PROD_USERNAME }} -c
+            fi
