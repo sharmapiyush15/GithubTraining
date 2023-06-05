@@ -55,20 +55,6 @@ jobs:
         echo y | sfdx plugins:install sfdx-git-delta
         sfdx plugins
 
-    - name: Generate SFDX Delta Package Patch Branch to DEV01 
-      if : github.base_ref  == 'DEV' 
-      #if: github.ref == 'refs/heads/DEV' && github.event_name == 'push'
-      run: |
-        #github.event.push.head.ref
-        git fetch origin "+refs/heads/*:refs/remotes/origin/*"
-        echo '.github' > .sgdignore
-        mkdir changed-sources
-
-        sfdx sgd:source:delta -d -f "origin/DEV" -o "changed-sources/" -s "force-app" -r "."
-        #sfdx sgd:source:delta --to "origin/DEV" --from "origin/${{ github.head_ref }}" --output changed-sources/   -i .sgdignore
-        #dir changed-sources/force-app/main
-        #cat changed-sources/package/package.xml
-        
     - name: Generate SFDX Delta Package PROD
       if: github.base_ref  == 'main'
       run: |
